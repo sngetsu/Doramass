@@ -21,8 +21,31 @@ HEADERS = {
 
 DOMINIO_OBJETIVO = "video.doramedplay.net"
 
-# Regex corregido: Se detiene si ve espacios, comillas, barras invertidas, comas o llaves de JSON
+# Regex: Se detiene en espacios, comillas, llaves JSON, comas, etc.
 CUALQUIER_M3U8 = r'(https?://[^\s"\'<>\\,;{}[\]]+?\.m3u8[^\s"\'<>\\,;{}[\]]*)'
+
+
+def encontrar_m3u8_en_html(html_texto):
+    """Limpia el código de escapes JSON y extrae el mejor m3u8"""
+    if not html_texto: return None
+
+    # 1. TRUCO CLAVE: Quitar escapes de JSON ( \/ pasa a ser / )
+    html_limpio = html_texto.replace('\\/', '/').replace('\\u0026', '&')
+    
+    # 2. Buscar todas las coincidencias
+    matches = re.findall(CUALQUIER_M3U8, html_limpio)
+    
+    if not matches:
+        return None
+        
+    # 3. Priorizar siempre el dominio objetivo (PeerTube)
+    for url in matches:
+        if DOMINIO_OBJETIVO in url:
+            return url
+            
+    # 4. Si no hay del objetivo, devolver el primero encontrado (ej: OK.ru)
+    return matches[0]
+
 
 def extraer_video_y_datos(url_episodio):
     """Entra a la página del episodio, saca el título real y busca cualquier m3u8"""
@@ -33,7 +56,7 @@ def extraer_video_y_datos(url_episodio):
         html = resp.text
         soup = BeautifulSoup(html, 'html.parser')
 
-        # 1. EXTRAER TÍTULO (Grupo y Episodio)
+        # --- EXTRAER TÍTULO ---
         page_title = soup.title.string if soup.title else ""
         clean_title = page_title.replace('- Doramed Play', '').strip()
         
@@ -52,15 +75,11 @@ def extraer_video_y_datos(url_episodio):
         if meta_img:
             imagen = meta_img['content']
 
-        # 2. BUSCAR CUALQUIER M3U8 EN EL HTML
-        video_url = None
-        match_m3u8 = re.search(CUALQUIER_M3U8, html)
-        
-        if match_m3u8:
-            # Limpiamos barras escapadas de JSON y comillas HTML por si acaso
-            video_url = match_m3u8.group(1).replace('\\/', '/').replace('&quot;', '')
-        else:
-            # 3. SI NO ESTÁ, BUSCAR DENTRO DE LOS IFRAMES
+        # --- BUSCAR VIDEO EN HTML PRINCIPAL ---
+        video_url = encontrar_m3u8_en_html(html)
+
+        # --- BUSCAR EN IFRAMES (Si no encontramos el objetivo aún) ---
+        if not video_url or DOMINIO_OBJETIVO not in video_url:
             iframes = soup.find_all('iframe')
             for iframe in iframes:
                 src = iframe.get('src', '')
@@ -68,15 +87,21 @@ def extraer_video_y_datos(url_episodio):
                 
                 try:
                     resp_iframe = requests.get(src, headers=HEADERS, timeout=10)
-                    match_iframe = re.search(CUALQUIER_M3U8, resp_iframe.text)
-                    if match_iframe:
-                        video_url = match_iframe.group(1).replace('\\/', '/').replace('&quot;', '')
-                        break
+                    url_iframe = encontrar_m3u8_en_html(resp_iframe.text)
+                    
+                    if url_iframe:
+                        # Si es del dominio objetivo, lo coronamos y salimos
+                        if DOMINIO_OBJETIVO in url_iframe:
+                            video_url = url_iframe
+                            break
+                        # Si no teníamos nada, guardamos este alternativo
+                        elif not video_url:
+                            video_url = url_iframe
                 except:
                     continue
 
+        # --- RETORNAR RESULTADO ---
         if video_url:
-            # Comprobamos si es del dominio que queremos
             es_valido = DOMINIO_OBJETIVO in video_url
             linea = f'#EXTINF:-1 tvg-logo="{imagen}" group-title="{grupo}", {episodio}\n{video_url}\n'
             return linea, es_valido
@@ -108,7 +133,6 @@ def main():
     if not os.path.exists(CARPETA_SALIDA):
         os.makedirs(CARPETA_SALIDA)
 
-    # Asegurarnos de que los archivos maestros existan antes de escribir
     inicializar_archivo(ARCHIVO_VALIDOS)
     inicializar_archivo(ARCHIVO_OTROS)
 
@@ -125,7 +149,6 @@ def main():
     urls_lote = urls_totales[start_index:end_index]
     print(f"--- RANGO: {start_index} a {end_index} ({len(urls_lote)} URLs) ---")
 
-    # Abrimos AMBOS archivos en modo "a" (Append / Añadir al final)
     with open(ARCHIVO_VALIDOS, "a", encoding="utf-8") as f_validos, \
          open(ARCHIVO_OTROS, "a", encoding="utf-8") as f_otros:
         
