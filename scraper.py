@@ -20,8 +20,9 @@ HEADERS = {
 }
 
 DOMINIO_OBJETIVO = "video.doramedplay.net"
-# Regex para encontrar CUALQUIER enlace m3u8
-CUALQUIER_M3U8 = r'(https?://[^\s"\'<>]+?\.m3u8[^\s"\'<>]*)'
+
+# Regex corregido: Se detiene si ve espacios, comillas, barras invertidas, comas o llaves de JSON
+CUALQUIER_M3U8 = r'(https?://[^\s"\'<>\\,;{}[\]]+?\.m3u8[^\s"\'<>\\,;{}[\]]*)'
 
 def extraer_video_y_datos(url_episodio):
     """Entra a la página del episodio, saca el título real y busca cualquier m3u8"""
@@ -56,7 +57,8 @@ def extraer_video_y_datos(url_episodio):
         match_m3u8 = re.search(CUALQUIER_M3U8, html)
         
         if match_m3u8:
-            video_url = match_m3u8.group(1).replace('\\/', '/')
+            # Limpiamos barras escapadas de JSON y comillas HTML por si acaso
+            video_url = match_m3u8.group(1).replace('\\/', '/').replace('&quot;', '')
         else:
             # 3. SI NO ESTÁ, BUSCAR DENTRO DE LOS IFRAMES
             iframes = soup.find_all('iframe')
@@ -68,7 +70,7 @@ def extraer_video_y_datos(url_episodio):
                     resp_iframe = requests.get(src, headers=HEADERS, timeout=10)
                     match_iframe = re.search(CUALQUIER_M3U8, resp_iframe.text)
                     if match_iframe:
-                        video_url = match_iframe.group(1).replace('\\/', '/')
+                        video_url = match_iframe.group(1).replace('\\/', '/').replace('&quot;', '')
                         break
                 except:
                     continue
